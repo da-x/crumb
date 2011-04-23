@@ -1,5 +1,5 @@
 /*
- * crumbwrap.so 
+ * crumbwrap.so
  *
  * Based on source from:
  * auto-apt.so
@@ -25,21 +25,22 @@
 #include <fcntl.h>
 #include <string.h>
 #include <limits.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 
-#define PKGCDB_AUTOCRUMB 1
+#include "crumb.h"
+
+#define PKGCDB_AUTOCRUMB        1
 
 #define CRUMB_HOOK_EXEC	0
 #define CRUMB_HOOK_OPEN	1
 #define CRUMB_HOOK_ACCESS	2
 #define CRUMB_HOOK_STAT	3
-#define NUM_CRUMB_HOOK	4
+#define NUM_CRUMB_HOOK  	4
 
 static int debug, quiet, verbose;
-
-void check_file(const char *filename)
-{
-	//	printf("%s\n", filename);
-}
+static int crumb_fd = -1;
+static struct sockaddr_un crumb_un_address;
 
 #define DPRINT(x) do {} while (0)
 
@@ -50,6 +51,7 @@ void check_file(const char *filename)
 #endif
 
 typedef int (*funcptr) ();
+typedef char *(*getenv_func) (const char *);
 
 static struct realfunctab {
 	char *name;
@@ -62,6 +64,7 @@ static struct realfunctab {
 	    /* execvp(3)->execv(3) */
 	{
 	"execv", NULL}, {
+	"getenv", NULL}, {
 	"open", NULL}, {
 	"open64", NULL},
 #if 1
@@ -78,6 +81,113 @@ static struct realfunctab {
 	"__lxstat64", NULL}, {
 	NULL, NULL}
 };
+
+static char *orig_getenv(const char *name);
+
+static void crumb_server_transaction(struct crumb_msg *msg)
+{
+	ssize_t ret;
+	size_t nb = sizeof(*msg);
+	struct sockaddr_un un;
+	socklen_t addrlen = sizeof(un);
+
+	ret = sendto(crumb_fd, msg, nb, 0,
+		     (const struct sockaddr *)&crumb_un_address, sizeof(crumb_un_address));
+
+	if (ret < (ssize_t)nb) {
+		fprintf(stderr, "crumb: failed message delivery, errno=%d\n", errno);
+		exit(-1);
+		return;
+	}
+
+	ret = recvfrom(crumb_fd, msg, sizeof(*msg), 0, (struct sockaddr *)&un, &addrlen);
+
+	if (ret < (ssize_t)sizeof(*msg)) {
+		fprintf(stderr, "crumb: failed getting a response to a message\n");
+		exit(-1);
+		return;
+	}
+}
+
+static void check_file(const char *filename)
+{
+	struct crumb_msg msg;
+
+	printf("WRAP: in %s\n", filename);
+
+	msg.type = CRUMB_MSG_TYPE_FILE_ACCESS;
+	snprintf(msg.u.file_access.filename,
+		 sizeof(msg.u.file_access.filename),
+		 "%s", msg.u.file_access.filename);
+
+	crumb_server_transaction(&msg);
+
+	printf("WRAP: out %s, %d\n", filename, msg.type);
+}
+
+static char *crumbwarp_conf_var(char *name, char *def)
+{
+	char *p = orig_getenv(name);
+	if (p == NULL)
+		return def;
+	if (*p == '\0')
+		return def;
+	return p;
+}
+
+static int crumbwarp_conf_switch(char *name)
+{
+	char *p = crumbwarp_conf_var(name, NULL);
+	if (p == NULL)
+		return 0;
+	if (strcasecmp(p, "no") == 0 || strcasecmp(p, "off") == 0)
+		return 0;
+	return 1;
+}
+
+static void __attribute__ ((constructor)) crumbwrap_init(void)
+{
+	int ret;
+	const char *crumb_path;
+
+	printf("Reload: %d\n", getpid());
+
+	crumb_fd = socket(AF_UNIX, SOCK_SEQPACKET, 0);
+	if (crumb_fd < 0)
+		exit(-1);
+
+	ret = fcntl(crumb_fd, F_SETFD, FD_CLOEXEC);
+	if (ret < 0) {
+		exit(-1);
+		return;
+	}
+
+	crumb_path = orig_getenv("CRUMB_SERVER_PATH");
+	if (!crumb_path) {
+		exit(-1);
+		return;
+	}
+
+	snprintf(crumb_un_address.sun_path, sizeof(crumb_un_address.sun_path), "%s", crumb_path);
+	crumb_un_address.sun_family = AF_UNIX;
+
+	ret = connect(crumb_fd, (const struct sockaddr *)&crumb_un_address, sizeof(crumb_un_address));
+	if (ret < 0) {
+		printf("crumbwrap: connect failed to %s, errno=%d\n", crumb_un_address.sun_path, errno);
+		exit(-1);
+		return;
+	}
+
+	if (crumbwarp_conf_switch("CRUMB_DEBUG")) {
+		debug = 1;
+	}
+	if (crumbwarp_conf_switch("CRUMB_QUIET")) {
+		quiet = 1;
+	}
+	if (crumbwarp_conf_switch("CRUMB_VERBOSE")) {
+		verbose = 1;
+	}
+}
 
 static funcptr load_library_symbol(char *name)
 {
@@ -99,9 +209,7 @@ static funcptr load_library_symbol(char *name)
 		return NULL;
 	}
 
-	if ((libcpath = getenv("LIBC_PATH")) == NULL)
-		libcpath = LIBCPATH;
-
+	libcpath = LIBCPATH;
 	handle = dlopen(libcpath, RTLD_LAZY);
 	if (!handle) {
 		fprintf(stderr, "%s", dlerror());
@@ -114,6 +222,18 @@ static funcptr load_library_symbol(char *name)
 	}
 	dlclose(handle);
 	return ft->fptr;
+}
+
+char *orig_getenv(const char *name)
+{
+	getenv_func __getenv;
+
+	__getenv = (getenv_func)load_library_symbol("getenv");
+	if (__getenv == NULL) {
+		return NULL;
+	}
+
+	return __getenv(name);
 }
 
 static int open_internal(const char *filename, int flag, int mode)
@@ -130,55 +250,12 @@ static int open_internal(const char *filename, int flag, int mode)
 	return __open(filename, flag, mode);
 }
 
-static char *crumbwarp_conf_var(char *name, char *def)
-{
-	char *p = getenv(name);
-	if (p == NULL)
-		return def;
-	if (*p == '\0')
-		return def;
-	return p;
-}
-
-static int crumbwarp_conf_switch(char *name)
-{
-	char *p = crumbwarp_conf_var(name, NULL);
-	if (p == NULL)
-		return 0;
-	if (strcasecmp(p, "no") == 0 || strcasecmp(p, "off") == 0)
-		return 0;
-	return 1;
-}
-
-/* _init() ? */
-static void crumbwarp_setup()
-{
-	static int inited = 0;
-
-	if (!inited) {
-		inited = 1;
-
-		if (crumbwarp_conf_switch("AUTO_CRUMB_DEBUG")) {
-			debug = 1;
-		}
-		if (crumbwarp_conf_switch("AUTO_CRUMB_QUIET")) {
-			quiet = 1;
-		}
-		if (crumbwarp_conf_switch("AUTO_CRUMB_VERBOSE")) {
-			verbose = 1;
-		}
-	}
-	return;
-}
-
 int execl(const char *path, const char *arg, ...)
 {
 	size_t argv_max = 1024;
 	const char **argv = alloca(argv_max * sizeof(const char *));
 	unsigned int i;
 	va_list args;
-
-	crumbwarp_setup();
 	argv[0] = arg;
 	va_start(args, arg);
 	i = 0;
@@ -203,8 +280,6 @@ int execle(const char *path, const char *arg, ...)
 	unsigned int i;
 	va_list args;
 	argv[0] = arg;
-
-	crumbwarp_setup();
 	va_start(args, arg);
 	i = 0;
 	while (argv[i++] != NULL) {
@@ -224,11 +299,8 @@ int execle(const char *path, const char *arg, ...)
 int execve(const char *filename, char *const argv[], char *const envp[])
 {
 	int e;
-	int apt = 0;
 	funcptr __execve;
 
-	crumbwarp_setup();
-again:
 	DPRINT(("execve: filename=%s \n", filename));
 	check_file(filename);
 	__execve = load_library_symbol("execve");
@@ -245,11 +317,8 @@ again:
 int execv(const char *filename, char *const argv[])
 {
 	int e;
-	int apt = 0;
 	funcptr __execv;
 
-	crumbwarp_setup();
-again:
 	DPRINT(("execv: filename=%s \n", filename));
 	check_file(filename);
 	__execv = load_library_symbol("execv");
@@ -263,19 +332,15 @@ again:
 	DPRINT(("execvp: filename=%s, e=%d\n", filename, e));
 	return e;
 }
-
+
 #undef open
 int open(const char *filename, int flags, ...)
 {
-	int apt = 0;
 	int e;
 	funcptr __open;
 	mode_t mode;
 	va_list ap;
-	static int o = 0;	/* XXX: guard for open() in detect_pacage? */
 
-	crumbwarp_setup();
-again:
 	DPRINT(("open: filename=%s \n", filename));
 	check_file(filename);
 	__open = load_library_symbol("open");
@@ -296,15 +361,11 @@ again:
 #undef __libc_open
 int __libc_open(const char *filename, int flags, ...)
 {
-	int apt = 0;
 	int e;
 	funcptr __open;
 	mode_t mode;
 	va_list ap;
-	static int o = 0;	/* XXX */
 
-	crumbwarp_setup();
-again:
 	DPRINT(("__libc_open: filename=%s \n", filename));
 	check_file(filename);
 	__open = load_library_symbol("__libc_open");
@@ -326,15 +387,11 @@ again:
 #undef open64
 int open64(const char *filename, int flags, ...)
 {
-	int apt = 0;
 	int e;
 	funcptr __open;
 	mode_t mode;
 	va_list ap;
-	static int o = 0;	/* XXX */
 
-	crumbwarp_setup();
-again:
 	DPRINT(("open64: filename=%s \n", filename));
 	check_file(filename);
 	__open = load_library_symbol("open64");
@@ -355,15 +412,11 @@ again:
 #undef __libc_open64
 int __libc_open64(const char *filename, int flags, ...)
 {
-	int apt = 0;
 	int e;
 	funcptr __open;
 	mode_t mode;
 	va_list ap;
-	static int o = 0;	/* XXX */
 
-	crumbwarp_setup();
-again:
 	DPRINT(("__libc_open64: filename=%s \n", filename));
 	check_file(filename);
 	__open = load_library_symbol("__libc_open64");
@@ -383,12 +436,9 @@ again:
 
 int access(const char *filename, int type)
 {
-	int apt = 0;
 	int e;
 	funcptr __access;
 
-	crumbwarp_setup();
-again:
 	DPRINT(("access: filename=%s \n", filename));
 	check_file(filename);
 	__access = load_library_symbol("access");
@@ -404,12 +454,9 @@ again:
 
 int euidaccess(const char *filename, int type)
 {
-	int apt = 0;
 	int e;
 	funcptr __euidaccess;
 
-	crumbwarp_setup();
-again:
 	DPRINT(("euidaccess: filename=%s \n", filename));
 	check_file(filename);
 	__euidaccess = load_library_symbol("euidaccess");
@@ -426,12 +473,9 @@ again:
 #undef __xstat
 int __xstat(int ver, const char *filename, struct stat *buf)
 {
-	int apt = 0;
 	int e;
 	funcptr __stat;
 
-	crumbwarp_setup();
-again:
 	DPRINT(("stat: filename=%s \n", filename));
 	check_file(filename);
 	__stat = load_library_symbol("__xstat");
@@ -449,12 +493,9 @@ again:
 struct stat64;			/* XXX */
 int __xstat64(int ver, const char *filename, struct stat64 *buf)
 {
-	int apt = 0;
 	int e;
 	funcptr __stat;
 
-	crumbwarp_setup();
-again:
 	DPRINT(("stat64: filename=%s \n", filename));
 	check_file(filename);
 	__stat = load_library_symbol("__xstat64");
@@ -471,12 +512,9 @@ again:
 #undef __lxstat
 int __lxstat(int ver, const char *filename, struct stat *buf)
 {
-	int apt = 0;
 	int e;
 	funcptr __stat;
 
-	crumbwarp_setup();
-again:
 	DPRINT(("lstat: filename=%s \n", filename));
 	check_file(filename);
 	__stat = load_library_symbol("__lxstat");
@@ -493,12 +531,9 @@ again:
 #undef __lxstat64
 int __lxstat64(int ver, const char *filename, struct stat64 *buf)
 {
-	int apt = 0;
 	int e;
 	funcptr __stat;
 
-	crumbwarp_setup();
-again:
 	DPRINT(("lstat64: filename=%s \n", filename));
 	check_file(filename);
 	__stat = load_library_symbol("__lxstat64");
@@ -511,3 +546,10 @@ again:
 	DPRINT(("lstat64: filename=%s e=%d\n", filename, e));
 	return e;
 }
+
+#undef getenv
+char *getenv(const char *name)
+{
+	return orig_getenv(name);
+}
+
