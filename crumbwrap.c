@@ -105,7 +105,9 @@ static void crumb_server_transaction(struct crumb_msg *msg)
 	}
 }
 
-static void check_file(const char *filename)
+static void check_file(const char *filename,
+		       enum crumb_access_type access_type,
+		       enum crumb_access_detail access_detail)
 {
 	struct crumb_msg msg;
 
@@ -113,7 +115,22 @@ static void check_file(const char *filename)
 	snprintf(msg.u.file_access.filename,
 		 sizeof(msg.u.file_access.filename),
 		 "%s", filename);
+	msg.u.file_access.access_type = access_type;
+	msg.u.file_access.access_detail = access_detail;
 	crumb_server_transaction(&msg);
+}
+
+static void check_file_open(const char *filename, int flags)
+{
+	if (flags & O_WRONLY  ||  flags & O_RDWR) {
+		if (flags & O_CREAT) {
+			check_file(filename, CRUMB_ACCESS_TYPE_MODIFY, CRUMB_ACCESS_TYPE_CREATE_RDWR);
+		} else {
+			check_file(filename, CRUMB_ACCESS_TYPE_MODIFY, CRUMB_ACCESS_TYPE_OPEN_RDWR);
+		}
+	} else {
+		check_file(filename, CRUMB_ACCESS_TYPE_READ, CRUMB_ACCESS_TYPE_OPEN_RDONLY);
+	}
 }
 
 static char *crumbwarp_conf_var(char *name, char *def)
@@ -225,20 +242,6 @@ char *orig_getenv(const char *name)
 	return __getenv(name);
 }
 
-static int open_internal(const char *filename, int flag, int mode)
-{
-	funcptr __open = load_library_symbol("__libc_open64");
-	if (__open == NULL)
-		__open = load_library_symbol("__libc_open");
-	if (__open == NULL)
-		__open = load_library_symbol("open64");
-	if (__open == NULL)
-		__open = load_library_symbol("open");
-	if (__open == NULL)
-		return -1;
-	return __open(filename, flag, mode);
-}
-
 int execl(const char *path, const char *arg, ...)
 {
 	size_t argv_max = 1024;
@@ -291,7 +294,7 @@ int execve(const char *filename, char *const argv[], char *const envp[])
 	funcptr __execve;
 
 	DPRINT(("execve: filename=%s \n", filename));
-	check_file(filename);
+	check_file(filename, CRUMB_ACCESS_TYPE_READ, CRUMB_ACCESS_TYPE_EXEC);
 	__execve = load_library_symbol("execve");
 	if (__execve == NULL) {
 		errno = EINVAL;
@@ -309,7 +312,7 @@ int execv(const char *filename, char *const argv[])
 	funcptr __execv;
 
 	DPRINT(("execv: filename=%s \n", filename));
-	check_file(filename);
+	check_file(filename, CRUMB_ACCESS_TYPE_READ, CRUMB_ACCESS_TYPE_EXEC);
 	__execv = load_library_symbol("execv");
 	if (__execv == NULL) {
 		errno = EINVAL;
@@ -331,7 +334,9 @@ int open(const char *filename, int flags, ...)
 	va_list ap;
 
 	DPRINT(("open: filename=%s \n", filename));
-	check_file(filename);
+
+	check_file_open(filename, flags);
+
 	__open = load_library_symbol("open");
 	if (__open == NULL) {
 		errno = ENOENT;
@@ -356,7 +361,7 @@ int __libc_open(const char *filename, int flags, ...)
 	va_list ap;
 
 	DPRINT(("__libc_open: filename=%s \n", filename));
-	check_file(filename);
+	check_file_open(filename, flags);
 	__open = load_library_symbol("__libc_open");
 	if (__open == NULL) {
 		errno = ENOENT;
@@ -382,7 +387,7 @@ int open64(const char *filename, int flags, ...)
 	va_list ap;
 
 	DPRINT(("open64: filename=%s \n", filename));
-	check_file(filename);
+	check_file_open(filename, flags);
 	__open = load_library_symbol("open64");
 	if (__open == NULL) {
 		errno = ENOENT;
@@ -407,7 +412,7 @@ int __libc_open64(const char *filename, int flags, ...)
 	va_list ap;
 
 	DPRINT(("__libc_open64: filename=%s \n", filename));
-	check_file(filename);
+	check_file_open(filename, flags);
 	__open = load_library_symbol("__libc_open64");
 	if (__open == NULL) {
 		errno = ENOENT;
@@ -429,7 +434,7 @@ int access(const char *filename, int type)
 	funcptr __access;
 
 	DPRINT(("access: filename=%s \n", filename));
-	check_file(filename);
+	check_file(filename, CRUMB_ACCESS_TYPE_READ, CRUMB_ACCESS_TYPE_ACCESS);
 	__access = load_library_symbol("access");
 	if (__access == NULL) {
 		errno = ENOENT;
@@ -447,7 +452,7 @@ int euidaccess(const char *filename, int type)
 	funcptr __euidaccess;
 
 	DPRINT(("euidaccess: filename=%s \n", filename));
-	check_file(filename);
+	check_file(filename, CRUMB_ACCESS_TYPE_READ, CRUMB_ACCESS_TYPE_ACCESS);
 	__euidaccess = load_library_symbol("euidaccess");
 	if (__euidaccess == NULL) {
 		errno = ENOENT;
@@ -466,7 +471,7 @@ int __xstat(int ver, const char *filename, struct stat *buf)
 	funcptr __stat;
 
 	DPRINT(("stat: filename=%s \n", filename));
-	check_file(filename);
+	check_file(filename, CRUMB_ACCESS_TYPE_READ, CRUMB_ACCESS_TYPE_STAT);
 	__stat = load_library_symbol("__xstat");
 	if (__stat == NULL) {
 		errno = ENOENT;
@@ -486,7 +491,7 @@ int __xstat64(int ver, const char *filename, struct stat64 *buf)
 	funcptr __stat;
 
 	DPRINT(("stat64: filename=%s \n", filename));
-	check_file(filename);
+	check_file(filename, CRUMB_ACCESS_TYPE_READ, CRUMB_ACCESS_TYPE_STAT);
 	__stat = load_library_symbol("__xstat64");
 	if (__stat == NULL) {
 		errno = ENOENT;
@@ -505,7 +510,7 @@ int __lxstat(int ver, const char *filename, struct stat *buf)
 	funcptr __stat;
 
 	DPRINT(("lstat: filename=%s \n", filename));
-	check_file(filename);
+	check_file(filename, CRUMB_ACCESS_TYPE_READ, CRUMB_ACCESS_TYPE_STAT);
 	__stat = load_library_symbol("__lxstat");
 	if (__stat == NULL) {
 		errno = ENOENT;
@@ -524,7 +529,7 @@ int __lxstat64(int ver, const char *filename, struct stat64 *buf)
 	funcptr __stat;
 
 	DPRINT(("lstat64: filename=%s \n", filename));
-	check_file(filename);
+	check_file(filename, CRUMB_ACCESS_TYPE_READ, CRUMB_ACCESS_TYPE_STAT);
 	__stat = load_library_symbol("__lxstat64");
 	if (__stat == NULL) {
 		errno = ENOENT;
