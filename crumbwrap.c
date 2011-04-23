@@ -88,11 +88,8 @@ static void crumb_server_transaction(struct crumb_msg *msg)
 {
 	ssize_t ret;
 	size_t nb = sizeof(*msg);
-	struct sockaddr_un un;
-	socklen_t addrlen = sizeof(un);
 
-	ret = sendto(crumb_fd, msg, nb, 0,
-		     (const struct sockaddr *)&crumb_un_address, sizeof(crumb_un_address));
+	ret = sendto(crumb_fd, msg, nb, 0, NULL, 0);
 
 	if (ret < (ssize_t)nb) {
 		fprintf(stderr, "crumb: failed message delivery, errno=%d\n", errno);
@@ -100,8 +97,7 @@ static void crumb_server_transaction(struct crumb_msg *msg)
 		return;
 	}
 
-	ret = recvfrom(crumb_fd, msg, sizeof(*msg), 0, (struct sockaddr *)&un, &addrlen);
-
+	ret = recvfrom(crumb_fd, msg, sizeof(*msg), 0, NULL, 0);
 	if (ret < (ssize_t)sizeof(*msg)) {
 		fprintf(stderr, "crumb: failed getting a response to a message\n");
 		exit(-1);
@@ -113,16 +109,11 @@ static void check_file(const char *filename)
 {
 	struct crumb_msg msg;
 
-	printf("WRAP: in %s\n", filename);
-
 	msg.type = CRUMB_MSG_TYPE_FILE_ACCESS;
 	snprintf(msg.u.file_access.filename,
 		 sizeof(msg.u.file_access.filename),
-		 "%s", msg.u.file_access.filename);
-
+		 "%s", filename);
 	crumb_server_transaction(&msg);
-
-	printf("WRAP: out %s, %d\n", filename, msg.type);
 }
 
 static char *crumbwarp_conf_var(char *name, char *def)
@@ -149,8 +140,6 @@ static void __attribute__ ((constructor)) crumbwrap_init(void)
 {
 	int ret;
 	const char *crumb_path;
-
-	printf("Reload: %d\n", getpid());
 
 	crumb_fd = socket(AF_UNIX, SOCK_SEQPACKET, 0);
 	if (crumb_fd < 0)

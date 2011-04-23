@@ -18,9 +18,20 @@
 
 #include "crumb.h"
 
+#define MAX_CLIENTS 0x100
+
+struct crumb_client {
+	int fd;
+};
+
 struct crumb_ctx {
 	char crumbwrap_path[0x200];
 	char server_path[0x200];
+
+	struct pollfd pfd[MAX_CLIENTS + 1];
+	struct crumb_client clients[MAX_CLIENTS];
+	int num_clients;
+
 	int serv_fd;
 	pid_t TEMP_pid;
 };
@@ -108,25 +119,81 @@ static int get_wrapper_path(struct crumb_ctx *ctx, char *arg)
 
 static void crumb_main_loop(struct crumb_ctx *ctx)
 {
-	struct pollfd pfd[1];
-	int ret, status;
+	int ret, status, i;
+	struct pollfd *pfd = &ctx->pfd[0];
 	pid_t pid;
 
-	while (1) {
-		pfd[0].fd = ctx->serv_fd;
-		pfd[0].revents = 0;
-		pfd[0].events = POLLIN;
+	pfd[0].fd = ctx->serv_fd;
+	pfd[0].revents = 0;
+	pfd[0].events = POLLIN;
 
-		ret = poll(&pfd[0], 1, 1000);
+	while (1) {
+		ret = poll(&pfd[0], 1 + ctx->num_clients, 1000);
 		if (ret > 0) {
+			int dead_clients;
+
 			if (pfd[0].revents & POLLIN) {
-				struct crumb_msg msg;
 				struct sockaddr_un un;
 				socklen_t addrlen = sizeof(un);
+				int client_fd;
 
-				ret = recvfrom(ctx->serv_fd, &msg, sizeof(msg), 0,
-					       (struct sockaddr *)&un, &addrlen);
-				printf("%d\n", ret);
+				pfd[0].revents &= ~POLLIN;
+
+				if (ctx->num_clients == MAX_CLIENTS) {
+					fprintf(stderr, "Too many client\n");
+					exit(-1);
+					return;
+				}
+
+				client_fd = accept(ctx->serv_fd, (struct sockaddr *)&un, &addrlen);
+				if (client_fd >= 0) {
+					int i = ctx->num_clients;
+					ctx->clients[i].fd = client_fd;
+					ctx->pfd[i + 1].fd = client_fd;
+					ctx->pfd[i + 1].events = POLLIN;
+					ctx->pfd[i + 1].revents = 0;
+					ctx->num_clients++;
+				}
+			}
+
+			dead_clients = 0;
+
+			for (i = 1; i <= ctx->num_clients; i++) {
+				struct crumb_client *client = &ctx->clients[i - 1];
+
+				if (pfd[i].revents & POLLIN) {
+					struct crumb_msg msg;
+					pfd[i].revents &= ~POLLIN;
+
+					ret = recvfrom(client->fd, &msg, sizeof(msg), 0, NULL, 0);
+					if (ret == 0) {
+						close(client->fd);
+						client->fd = -1;
+						dead_clients++;
+						continue;
+					}
+
+					if (msg.type == CRUMB_MSG_TYPE_FILE_ACCESS) {
+						printf("halt it: %s\n", msg.u.file_access.filename);
+						msg.type = CRUMB_MSG_TYPE_CONTINUE;
+					}
+
+					ret = sendto(client->fd, &msg, sizeof(msg), 0, NULL, 0);
+				}
+			}
+
+			if (dead_clients > 0) {
+				for (i = 0; i < ctx->num_clients; i++) {
+					struct crumb_client *client = &ctx->clients[i];
+					struct pollfd *cpfd = &ctx->pfd[i+ 1];
+
+					if (client->fd == -1) {
+						memmove(client, &client[1], sizeof(*client)*(ctx->num_clients - i - 1));
+						memmove(pfd, &pfd[1], sizeof(*cpfd)*(ctx->num_clients - i - 1));
+						ctx->num_clients--;
+						i--;
+					}
+				}
 			}
 		}
 
