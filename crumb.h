@@ -44,4 +44,7 @@ struct crumb_msg {
 	} u;
 };
 
+
+#define CRUMBWRAP_SERVER_PATH_ENV "CRUMBWRAP_SERVER_PATH"
+
 #endif

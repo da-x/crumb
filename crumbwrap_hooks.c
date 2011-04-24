@@ -168,7 +168,7 @@ static void __attribute__ ((constructor)) crumbwrap_init(void)
 		return;
 	}
 
-	crumb_path = orig_getenv("CRUMB_SERVER_PATH");
+	crumb_path = orig_getenv(CRUMBWRAP_SERVER_PATH_ENV);
 	if (!crumb_path) {
 		exit(-1);
 		return;
