@@ -212,12 +212,14 @@ static void crumbwrap_handle_client_ready(struct crumbwrap_ctx *ctx)
 				case CRUMB_ACCESS_TYPE_UNLINK: d = "UNLINK"; break;
 				case CRUMB_ACCESS_TYPE_DIROPEN: d = "DIROPEN"; break;
 				case CRUMB_ACCESS_TYPE_EXEC: d = "EXEC"; break;
+				case CRUMB_ACCESS_TYPE_CHDIR: d = "CHDIR"; break;
 				};
 
 				msg.type = CRUMB_MSG_TYPE_CONTINUE;
 
 				fprintf(ctx->output_stream,"%ld:VFS:%s:%s:%s\n", client - &ctx->clients[0],
 					a, d, msg.u.file_access.filename);
+				fflush(ctx->output_stream);
 				client->blocked = 1;
 
 				if (ctx->trace) {

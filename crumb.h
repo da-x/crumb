@@ -21,6 +21,7 @@ enum crumb_access_detail {
 	CRUMB_ACCESS_TYPE_UNLINK,
 	CRUMB_ACCESS_TYPE_DIROPEN,
 	CRUMB_ACCESS_TYPE_EXEC,
+	CRUMB_ACCESS_TYPE_CHDIR,
 };
 
 struct crumb_msg_new_proc {

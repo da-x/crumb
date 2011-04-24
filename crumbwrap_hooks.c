@@ -65,6 +65,8 @@ static struct realfunctab {
 	{
 	"execv", NULL}, {
 	"getenv", NULL}, {
+	"chdir", NULL}, {
+	"fchdir", NULL}, {
 	"open", NULL}, {
 	"open64", NULL}, {
 	"unlink", NULL},
@@ -544,7 +546,7 @@ int __lxstat64(int ver, const char *filename, struct stat64 *buf)
 }
 
 #undef unlink
-int unlinkt(const char *filename)
+int unlink(const char *filename)
 {
 	int e;
 	funcptr __unlink;
@@ -556,9 +558,49 @@ int unlinkt(const char *filename)
 		errno = ENOENT;
 		return -1;
 	}
-	DPRINT(("lstat64 = %p\n", __unlink));
+	DPRINT(("unlink = %p\n", __unlink));
 	e = __unlink(filename);
 	DPRINT(("unlink filename=%s e=%d\n", filename, e));
+	return e;
+}
+
+#undef chdir
+int chdir(const char *filename)
+{
+	int e;
+	funcptr __chdir;
+
+	DPRINT(("chdir filename=%s \n", filename));
+	check_file(filename, CRUMB_ACCESS_TYPE_READ, CRUMB_ACCESS_TYPE_CHDIR);
+	__chdir = load_library_symbol("chdir");
+	if (__chdir == NULL) {
+		errno = ENOENT;
+		return -1;
+	}
+	DPRINT(("chdir = %p\n", __chdir));
+	e = __chdir(filename);
+	DPRINT(("chdir filename=%s e=%d\n", filename, e));
+	return e;
+}
+
+#undef fchdir
+int fchdir(int fd)
+{
+	int e;
+	funcptr __fchdir;
+
+	DPRINT(("fchdir fd=%d \n", fd));
+	printf("fchdir not handled\n");
+	exit(-1);
+
+	__fchdir = load_library_symbol("fchdir");
+	if (__fchdir == NULL) {
+		errno = ENOENT;
+		return -1;
+	}
+
+	e = __fchdir(fd);
+	DPRINT(("fchdir fd=%d\n", fd, e));
 	return e;
 }
 
