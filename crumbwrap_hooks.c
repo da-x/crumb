@@ -13,6 +13,8 @@
 #define __USE_LARGEFILE64 1
 #define __USE_FILE_OFFSET64 1
 
+#define _GNU_SOURCE
+
 #include <unistd.h>
 #include <errno.h>
 #include <stdio.h>
@@ -114,6 +116,89 @@ static void crumb_server_transaction(struct crumb_msg *msg)
 	}
 }
 
+static void crumb_canonize_path(const char *filename, char *ostr, int ostr_max)
+{
+	char bcwd[0x200], *cwd;
+	const char *b, *scan = filename;
+	char *o, *x, *p;
+	int dont_remove_slash = 0, last_is_dotted = 0;
+	int lf = strlen(filename);
+
+	if (lf == 0) {
+		*ostr = '\0';
+		return;
+	}
+
+	cwd = getcwd(bcwd, sizeof(bcwd));
+
+	if (strrchr(filename, '/') == filename + lf - 1) {
+		dont_remove_slash = 1;
+	}
+
+	if (filename[0] != '/') {
+		snprintf(ostr, ostr_max, "%s/", cwd);
+		o = ostr + strlen(ostr);
+	} else {
+		o = ostr;
+		o[0] = '/';
+		o[1] = '\0';
+		o++;
+	}
+
+	while (*scan != '\0') {
+		p = strchrnul(scan, '/');
+		b = o;
+
+		while (scan < p) {
+			*o = *scan;
+			o++;
+			scan++;
+		}
+
+		if (*scan == '/')
+			scan++;
+
+		o[0] = '\0';
+
+		// printf("xx %s\n", ostr);
+		last_is_dotted = 0;
+		if (!strcmp(b, "")) {
+			continue;
+		}
+
+		if (!strcmp(b, ".")) {
+			o -= 1;
+			o[0] = '\0';
+			last_is_dotted = 1;
+			continue;
+		}
+
+		if (!strcmp(b, "..")) {
+			o -= 3;
+			o[0] = '\0';
+			x = strrchr(ostr, '/');
+			if (x) {
+				o = x + 1;
+				*o = '\0';
+			} else {
+				o = ostr;
+				*o = '\0';
+			}
+			last_is_dotted = 1;
+			continue;
+		}
+
+		o[0] = '/';
+		o++;
+		o[0] = '\0';
+	}
+
+	if (!dont_remove_slash && !last_is_dotted) {
+		if (o > ostr  &&  o[-1] == '/')
+			o[-1] = '\0';
+	}
+}
+
 static void check_file(const char *filename,
 		       enum crumb_access_type access_type,
 		       enum crumb_access_detail access_detail)
@@ -121,9 +206,8 @@ static void check_file(const char *filename,
 	struct crumb_msg msg;
 
 	msg.type = CRUMB_MSG_TYPE_FILE_ACCESS;
-	snprintf(msg.u.file_access.filename,
-		 sizeof(msg.u.file_access.filename),
-		 "%s", filename);
+	crumb_canonize_path(filename, msg.u.file_access.filename,
+			    sizeof(msg.u.file_access.filename));
 	msg.u.file_access.access_type = access_type;
 	msg.u.file_access.access_detail = access_detail;
 	crumb_server_transaction(&msg);
