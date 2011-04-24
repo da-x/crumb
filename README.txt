@@ -33,7 +33,7 @@ using stdin/stdout.
 
 Foe example, here's a wrapping of gcc via crumb:
 
-   crumb gcc -c test/a.c -o test/a.o
+   crumbwrap gcc -c test/a.c -o test/a.o
 
 It will emit the line:
 
