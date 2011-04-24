@@ -66,7 +66,9 @@ static struct realfunctab {
 	"execv", NULL}, {
 	"getenv", NULL}, {
 	"open", NULL}, {
-	"open64", NULL},
+	"open64", NULL}, {
+	"unlink", NULL},
+
 #if 1
 	{
 	"__libc_open", NULL}, {
@@ -540,6 +542,26 @@ int __lxstat64(int ver, const char *filename, struct stat64 *buf)
 	DPRINT(("lstat64: filename=%s e=%d\n", filename, e));
 	return e;
 }
+
+#undef unlink
+int unlinkt(const char *filename)
+{
+	int e;
+	funcptr __unlink;
+
+	DPRINT(("unlink filename=%s \n", filename));
+	check_file(filename, CRUMB_ACCESS_TYPE_MODIFY, CRUMB_ACCESS_TYPE_UNLINK);
+	__unlink = load_library_symbol("unlink");
+	if (__unlink == NULL) {
+		errno = ENOENT;
+		return -1;
+	}
+	DPRINT(("lstat64 = %p\n", __unlink));
+	e = __unlink(filename);
+	DPRINT(("unlink filename=%s e=%d\n", filename, e));
+	return e;
+}
+
 
 #undef getenv
 char *getenv(const char *name)
