@@ -51,6 +51,7 @@ static struct sockaddr_un crumb_un_address;
 #endif
 
 typedef int (*funcptr) ();
+typedef FILE *(*funcptr_fopen) ();
 typedef char *(*getenv_func) (const char *);
 
 static struct realfunctab {
@@ -69,6 +70,8 @@ static struct realfunctab {
 	"fchdir", NULL}, {
 	"open", NULL}, {
 	"open64", NULL}, {
+	"fopen", NULL}, {
+	"fopen64", NULL}, {
 	"unlink", NULL},
 
 #if 1
@@ -79,6 +82,8 @@ static struct realfunctab {
 	{
 	"access", NULL}, {
 	"euidaccess", NULL}, {
+	"create", NULL}, {
+	"create64", NULL}, {
 	"__xstat", NULL}, {
 	"__xstat64", NULL}, {
 	"__lxstat", NULL}, {
@@ -135,6 +140,34 @@ static void check_file_open(const char *filename, int flags)
 	} else {
 		check_file(filename, CRUMB_ACCESS_TYPE_READ, CRUMB_ACCESS_TYPE_OPEN_RDONLY);
 	}
+}
+
+static void check_file_fopen(const char *filename, const char *mode)
+{
+	if (!strcmp("r", mode))
+		check_file(filename, CRUMB_ACCESS_TYPE_READ, CRUMB_ACCESS_TYPE_OPEN_RDONLY);
+	else if (!strcmp("r+", mode))
+		check_file(filename, CRUMB_ACCESS_TYPE_READ, CRUMB_ACCESS_TYPE_OPEN_RDONLY);
+	else if (!strcmp("w", mode))
+		check_file(filename, CRUMB_ACCESS_TYPE_MODIFY, CRUMB_ACCESS_TYPE_CREATE_RDWR);
+	else if (!strcmp("w+", mode))
+		check_file(filename, CRUMB_ACCESS_TYPE_MODIFY, CRUMB_ACCESS_TYPE_OPEN_RDWR);
+	else if (!strcmp("a", mode))
+		check_file(filename, CRUMB_ACCESS_TYPE_MODIFY, CRUMB_ACCESS_TYPE_CREATE_RDWR);
+	else if (!strcmp("a+", mode))
+		check_file(filename, CRUMB_ACCESS_TYPE_MODIFY, CRUMB_ACCESS_TYPE_OPEN_RDWR);
+	else if (!strcmp("rb", mode))
+		check_file(filename, CRUMB_ACCESS_TYPE_READ, CRUMB_ACCESS_TYPE_OPEN_RDONLY);
+	else if (!strcmp("r+b", mode))
+		check_file(filename, CRUMB_ACCESS_TYPE_READ, CRUMB_ACCESS_TYPE_OPEN_RDONLY);
+	else if (!strcmp("wb", mode))
+		check_file(filename, CRUMB_ACCESS_TYPE_MODIFY, CRUMB_ACCESS_TYPE_CREATE_RDWR);
+	else if (!strcmp("w+b", mode))
+		check_file(filename, CRUMB_ACCESS_TYPE_MODIFY, CRUMB_ACCESS_TYPE_OPEN_RDWR);
+	else if (!strcmp("ab", mode))
+		check_file(filename, CRUMB_ACCESS_TYPE_MODIFY, CRUMB_ACCESS_TYPE_CREATE_RDWR);
+	else if (!strcmp("a+b", mode))
+		check_file(filename, CRUMB_ACCESS_TYPE_MODIFY, CRUMB_ACCESS_TYPE_OPEN_RDWR);
 }
 
 static char *crumbwarp_conf_var(char *name, char *def)
@@ -355,6 +388,46 @@ int open(const char *filename, int flags, ...)
 	return e;
 }
 
+#undef fopen64
+FILE *fopen64(const char *filename, const char *mode)
+{
+	funcptr_fopen __open;
+	FILE *f;
+
+	DPRINT(("fopen: filename=%s \n", filename));
+	check_file_fopen(filename, mode);
+	__open = (funcptr_fopen)load_library_symbol("fopen64");
+	if (__open == NULL) {
+		errno = ENOENT;
+		return NULL;
+	}
+
+	DPRINT(("open = %p\n", __open));
+	f = __open(filename, mode);
+	DPRINT(("open: filename=%s f=%p\n", filename, f));
+	return f;
+}
+
+#undef fopen
+FILE *fopen(const char *filename, const char *mode)
+{
+	funcptr_fopen __open;
+	FILE *f;
+
+	DPRINT(("fopen: filename=%s \n", filename));
+	check_file_fopen(filename, mode);
+	__open = (funcptr_fopen)load_library_symbol("fopen");
+	if (__open == NULL) {
+		errno = ENOENT;
+		return NULL;
+	}
+
+	DPRINT(("open = %p\n", __open));
+	f = __open(filename, mode);
+	DPRINT(("open: filename=%s f=%p\n", filename, f));
+	return f;
+}
+
 #if 1
 #undef __libc_open
 int __libc_open(const char *filename, int flags, ...)
@@ -403,6 +476,44 @@ int open64(const char *filename, int flags, ...)
 	va_end(ap);
 	e = __open(filename, flags, mode);
 	DPRINT(("open64: filename=%s e=%d\n", filename, e));
+	return e;
+}
+
+#undef creat
+int creat(const char *filename, mode_t mode)
+{
+	int e;
+	funcptr __creat;
+
+	DPRINT(("creat: filename=%s \n", filename));
+	check_file_open(filename, O_RDWR | O_CREAT);
+	__creat = load_library_symbol("creat");
+	if (__creat == NULL) {
+		errno = ENOENT;
+		return -1;
+	}
+	DPRINT(("creat = %p\n", __creat));
+	e = __creat(filename, mode);
+	DPRINT(("creat: filename=%s e=%d\n", filename, e));
+	return e;
+}
+
+#undef creat64
+int creat64(const char *filename, mode_t mode)
+{
+	int e;
+	funcptr __creat;
+
+	DPRINT(("creat64: filename=%s \n", filename));
+	check_file_open(filename, O_RDWR | O_CREAT);
+	__creat = load_library_symbol("creat64");
+	if (__creat == NULL) {
+		errno = ENOENT;
+		return -1;
+	}
+	DPRINT(("creat64 = %p\n", __creat));
+	e = __creat(filename, mode);
+	DPRINT(("creat64: filename=%s e=%d\n", filename, e));
 	return e;
 }
 
