@@ -138,7 +138,7 @@ static void crumbwrap_handle_server_ready(struct crumbwrap_ctx *ctx)
 	struct pollfd *pfd = &ctx->pfd[0];
 	struct sockaddr_un un;
 	socklen_t addrlen = sizeof(un);
-	int client_fd;
+	int client_fd, ret;
 
 	pfd[0].revents &= ~POLLIN;
 
@@ -149,6 +149,14 @@ static void crumbwrap_handle_server_ready(struct crumbwrap_ctx *ctx)
 	}
 
 	client_fd = accept(ctx->serv_fd, (struct sockaddr *)&un, &addrlen);
+
+	ret = fcntl(client_fd, F_SETFD, FD_CLOEXEC);
+	if (ret < 0) {
+		fprintf(stderr, "crumb: fcntl failed\n");
+		exit(-1);
+		return;
+	}
+
 	if (client_fd >= 0) {
 		struct crumbwrap_client *client = list_first_entry(&ctx->free_clients_list, struct crumbwrap_client, node);
 		int pfd_index = ctx->num_active_clients;
@@ -184,6 +192,12 @@ static void crumbwrap_handle_client_ready(struct crumbwrap_ctx *ctx)
 	for (i = 0; i < ctx->num_active_clients; i++) {
 		struct crumbwrap_client *client = ctx->pfd_to_client[i];
 		struct pollfd *cpfd = &pfd[i + NON_CLIENTS_FDS];
+
+		if (cpfd->revents & POLLHUP) {
+			cpfd->revents &= ~POLLHUP;
+			list_add_tail(&client->node, &ctx->dead_clients_list);
+			continue;
+		}
 
 		if (cpfd->revents & POLLIN) {
 			struct crumb_msg msg;
@@ -315,8 +329,13 @@ static void crumbwrap_main_loop(struct crumbwrap_ctx *ctx)
 			if (pfd[0].revents & POLLIN)
 				crumbwrap_handle_server_ready(ctx);
 
-			if (pfd[1].revents & POLLIN)
+			if (pfd[1].revents & POLLHUP) {
+				/* TODO: improve handling */
+				break;
+			}
+			if (pfd[1].revents & POLLIN) {
 				crumbwrap_handle_stdin_ready(ctx);
+			}
 
 			crumbwrap_handle_client_ready(ctx);
 		}
@@ -412,13 +431,26 @@ static int crumbwrap_main(int argc, char *argv[], struct crumbwrap_ctx *ctx)
 
 	if (ctx->comm_input_fd == 0)
 		ctx->input_stream = stdin;
-	else
+	else {
+		ret = fcntl(ctx->comm_input_fd, F_SETFD, FD_CLOEXEC);
+		if (ret < 0) {
+			fprintf(stderr, "crumb: fcntl failed\n");
+			return -1;
+		}
 		ctx->input_stream = fdopen(ctx->comm_input_fd, "r");
+	}
 
 	if (ctx->comm_output_fd == 1)
 		ctx->output_stream = stdout;
-	else
+	else {
+		ret = fcntl(ctx->comm_output_fd, F_SETFD, FD_CLOEXEC);
+		if (ret < 0) {
+			fprintf(stderr, "crumb: fcntl failed\n");
+			return -1;
+		}
+
 		ctx->output_stream = fdopen(ctx->comm_output_fd, "w");
+	}
 
 	ret = get_wrapper_path(ctx, exe_path);
 	if (ret)
