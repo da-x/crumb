@@ -1,0 +1,7 @@
+# Crumbfile for this demo project
+
+<<<:TOPLEVEL>>>
+
+gcc <<<!bigo.o bigo2.o program.o>>> -o <<<program>>>
+gcc -O2 -c <<<\.>>>.c -o <<<*.o>>>
+python <<<!generator.py>>> <<<auto_generated.h>>>
