@@ -1,0 +1,16 @@
+Source: crumb
+Section: devel
+XSBC-Original-Maintainer: Dan Aloni <dan@aloni.org>
+VCS-Git: git://github.com/da-x/crumb.git
+VCS-Browser: https://github.com/da-x/crumb
+Priority: optional
+Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
+Standards-Version: 3.7.3
+Build-Depends: debhelper (>= 5)
+Homepage: http://github.com/da-x/crumb
+
+Package: crumb
+Architecture: any
+Depends: ${shlibs:Depends}
+Description: A build automation tool that uses shared library hooks
+  in order to detect dependencies for any program in a build process.
