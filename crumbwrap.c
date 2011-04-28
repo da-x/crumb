@@ -307,7 +307,7 @@ static void crumbwrap_main_loop(struct crumbwrap_ctx *ctx)
 	pfd[0].events = POLLIN;
 	pfd[0].revents = 0;
 
-	ret = fcntl(0, F_SETFL, fcntl(0, F_GETFL) & ~O_NONBLOCK);
+	ret = fcntl(ctx->comm_input_fd, F_SETFL, fcntl(ctx->comm_input_fd, F_GETFL) & ~O_NONBLOCK);
 	if (ret < 0)
 		return;
 
