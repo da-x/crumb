@@ -75,7 +75,7 @@ the actual code of crumb. It uses the crumbwrap tool that was described above.
 For testing it, I've added a demo project named 'arena1'.
 
 The 'arena1' test program depends on 3 .o files, two of them take noticble time to
-compiler. The other depends on a header and then indirectly depends on an
+compile. The other depend on a C header and then indirectly depends on an
 auto-generated header that is generated using a python script. The python
 script also implicitly depends on an extra local Python module import, and on a
 local text file.
